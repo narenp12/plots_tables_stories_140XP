@@ -1,0 +1,119 @@
+---
+title: "Week 3 Plots, Tables, and Stories Work"
+author: "Naren Prakash"
+format: pdf
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), echo = TRUE, tidy = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(plotly)
+library(sf)
+```
+
+```{r}
+wa_counties <- read_sf("C:/Users/naren/Dropbox/STATS 140XP/Week 3/Plots Tables and Stories/yourWorkshop/_data/wa_counties.geojson")
+ev_data <- read_csv("C:/Users/naren/Dropbox/STATS 140XP/Week 3/Plots Tables and Stories/yourWorkshop/_data/EV2025_01.csv")
+demographics <- read_csv("C:/Users/naren/Dropbox/STATS 140XP/Week 3/Plots Tables and Stories/yourWorkshop/_data/county_demog.csv")
+```
+Visual idea: Find outlier counties in Seattle by earnings (after combining age groups), take median earnings, then compare those earnings to the distribution of the medians of all the counties.
+
+Focusing on population over 25
+
+
+```{r}
+print(colnames(ev_data))
+```
+```{r}
+demo <- demographics %>% select(c(County, Pop_25_over, MEDIAN_EARNINGS_2022_25_over))
+ev_sub <- ev_data %>% select(c(County, `DOL Vehicle ID`))
+
+combined <- full_join(demo, ev_sub)
+combined <- combined %>% right_join(wa_counties, by = c("County" = "JURISDICT_LABEL_NM"))
+```
+```{r}
+print(colnames(combined))
+```
+```{r}
+combined <- combined %>% select(County, Pop_25_over, MEDIAN_EARNINGS_2022_25_over, `DOL Vehicle ID`, geometry)
+combined$County <- as.factor(combined$County)
+```
+
+```{r}
+EV_totals <- combined %>%
+  group_by(County) %>%
+  summarise("EV_count" = n()) %>%
+  arrange(desc(EV_count))
+EV_totals
+```
+
+```{r}
+plot1 <- combined %>% ggplot(aes(y = County)) +
+  geom_histogram(stat = "count") +
+  theme_minimal()
+plot1
+```
+```{r}
+ggplotly(plot1, show_legend = TRUE)
+```
+
+Formally identifying outliers
+
+```{r}
+median <- median(EV_totals$EV_count)
+iqr <- IQR(EV_totals$EV_count)
+
+EV_totals <- EV_totals %>% mutate("scale" = (EV_count - median) / iqr)
+outlier_df <- EV_totals %>% filter(abs(scale) > 3)
+outliers <- outlier_df$County
+outlier_df
+```
+```{r}
+county_data <- combined %>%
+  group_by(County) %>%
+  summarise("median_earnings" = mean(MEDIAN_EARNINGS_2022_25_over))
+outlier_data <- county_data %>% filter(County %in% outliers)
+
+county_data <- county_data %>% mutate("outlier" = (County %in% outliers))
+```
+
+```{r}
+plot2 <- county_data %>% ggplot(aes(y = County, x = median_earnings, colour = outlier)) +
+  geom_point() +
+  theme_minimal()
+plot2
+
+ggplotly(plot2, show_legend = TRUE)
+```
+
+Making a distribution of the medians:
+
+```{r}
+p3 <- county_data %>% ggplot(aes(x = median_earnings)) +
+  stat_ecdf() +
+  geom_vline(data = outlier_data, aes(xintercept = median_earnings, colour = "Outlier Percentiles"))
+p3
+ggplotly(p3)
+```
+```{r}
+quant <- ecdf(county_data$median_earnings)
+
+county_data <- county_data %>% mutate(median_percentile = quant(median_earnings))
+```
+
+```{r}
+final <- wa_counties %>% left_join(county_data, by = c("JURISDICT_LABEL_NM" = "County"))
+
+f <- final %>% ggplot(aes(fill = median_percentile)) +
+  geom_sf() +
+  scale_fill_gradient(low = "pink", high = "purple") +
+  theme_minimal() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  ggtitle("Median Incomes in Washington State by Percentile")
+
+ggplotly(f, show_legend = TRUE)
+```
